@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gigafile Video Player - Sans Proxy</title>
+    
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <style>
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #525252; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background-color: #737373; }
+    </style>
+</head>
+<body class="bg-neutral-900 text-neutral-100 font-sans min-h-screen selection:bg-indigo-500 selection:text-white">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Données initiales pour montrer à quoi ça ressemble
+        const SAMPLE_JSON = {
+          "pages": { "max": 10, "current": "1", "path": "0907-c77b988023223f8ce004756938da5e46" },
+          "html": "<div class='image-area'><div data-val='./upload/B/0907-c77b988023223f8ce004756938da5e46/1.mov' class='pin ' filetype='other' data-mime='video/quicktime' data-isimage=''></div><a class='image-data' href='#' target='_blank'><img src='./upload/B/thumb/0907-c77b988023223f8ce004756938da5e46/1_300x300.mov.png' alt='1.mov' title='1.mov'><div class='comment_count count0' data-val='0'>0</div></a><div class='image-title'>Exemple de vidéo</div></div>"
+        };
+
+        function App() {
+          const [rawData, setRawData] = useState('');
+          const [baseUrl, setBaseUrl] = useState('https://fly14.gigafile.nu'); // Important pour construire les liens
+          const [videos, setVideos] = useState([]);
+          const [activeVideo, setActiveVideo] = useState(null);
+          const [error, setError] = useState('');
+          const videoRef = useRef(null);
+
+          const extractVideosFromHtml = (htmlString, domain) => {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(htmlString, 'text/html');
+            const areas = doc.querySelectorAll('.image-area');
+            const extractedVideos = [];
+            
+            // S'assurer que le domaine ne finit pas par un slash
+            const cleanDomain = domain.endsWith('/') ? domain.slice(0, -1) : domain;
+
+            areas.forEach((area, index) => {
+              const pin = area.querySelector('.pin');
+              
+              if (pin && pin.getAttribute('data-mime')?.startsWith('video/')) {
+                const dataVal = pin.getAttribute('data-val');
+                const title = area.querySelector('.image-title')?.textContent || `Vidéo ${index + 1}`;
+                const imgNode = area.querySelector('img');
+                const thumbSrc = imgNode ? imgNode.getAttribute('src') : '';
+
+                // Gérer le './' au début du chemin
+                const cleanDataVal = dataVal ? (dataVal.startsWith('./') ? dataVal.substring(1) : dataVal) : '';
+                const cleanThumbSrc = thumbSrc ? (thumbSrc.startsWith('./') ? thumbSrc.substring(1) : thumbSrc) : '';
+
+                const videoSrc = cleanDataVal ? cleanDomain + cleanDataVal : '';
+                const thumbnail = cleanThumbSrc ? cleanDomain + cleanThumbSrc : '';
+
+                extractedVideos.push({
+                  id: index.toString() + '_' + Date.now(), // ID unique
+                  title,
+                  videoSrc,
+                  thumbnail,
+                  mimeType: pin.getAttribute('data-mime')
+                });
+              }
+            });
+
+            return extractedVideos;
+          };
+
+          const handleParseData = () => {
+            setError('');
+            
+            if (!rawData.trim()) {
+              setError("Veuillez coller le code source ou le JSON.");
+              return;
+            }
+
+            try {
+              let htmlContent = "";
+
+              // On essaie d'abord de voir si l'utilisateur a collé le JSON complet
+              try {
+                const parsedJson = JSON.parse(rawData);
+                if (parsedJson.html) {
+                  htmlContent = parsedJson.html;
+                } else {
+                  throw new Error("Pas de propriété 'html' dans le JSON");
+                }
+              } catch (e) {
+                // Si ce n'est pas du JSON valide, on suppose que l'utilisateur a collé directement l'HTML
+                htmlContent = rawData;
+              }
+
+              const extractedVideos = extractVideosFromHtml(htmlContent, baseUrl);
+              
+              if (extractedVideos.length === 0) {
+                setError("Aucune balise vidéo valide n'a été trouvée dans les données fournies.");
+                setVideos([]);
+                setActiveVideo(null);
+              } else {
+                setVideos(extractedVideos);
+                setActiveVideo(extractedVideos[0]);
+                setRawData(''); // On vide le champ après succès
+              }
+            } catch (err) {
+              setError(`Erreur lors de l'analyse : ${err.message}`);
+            }
+          };
+
+          const handleVideoSelect = (video) => {
+            setActiveVideo(video);
+            if (videoRef.current) {
+              videoRef.current.load();
+              videoRef.current.play().catch(e => console.log("Lecture auto bloquée"));
+            }
+          };
+
+          // Afficher l'exemple au premier chargement
+          useEffect(() => {
+              const initialVideos = extractVideosFromHtml(SAMPLE_JSON.html, baseUrl);
+              setVideos(initialVideos);
+              if (initialVideos.length > 0) setActiveVideo(initialVideos[0]);
+          }, []);
+
+          return (
+            <div>
+              <header className="bg-neutral-950 border-b border-neutral-800 p-4 sticky top-0 z-10 shadow-md">
+                <div className="max-w-7xl mx-auto flex flex-col items-start gap-4">
+                  <div className="flex items-center gap-2 text-indigo-400">
+                    <i className="ph-fill ph-film-strip text-3xl"></i>
+                    <h1 className="text-xl font-bold tracking-tight">GigaPlayer <span className="text-xs text-neutral-500 uppercase tracking-widest ml-2 border border-neutral-700 px-2 py-1 rounded">Offline Mode</span></h1>
+                  </div>
+                  
+                  <div className="w-full bg-neutral-900 p-4 rounded-xl border border-neutral-800 flex flex-col gap-3">
+                    <div className="flex justify-between items-center">
+                        <label className="text-sm font-medium text-neutral-400">1. Collez le code JSON ou HTML de la page :</label>
+                        <div className="flex items-center gap-2">
+                            <label className="text-xs text-neutral-500">Serveur de base :</label>
+                            <input 
+                                type="text" 
+                                value={baseUrl} 
+                                onChange={(e) => setBaseUrl(e.target.value)}
+                                className="bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-neutral-300 w-48 focus:outline-none focus:border-indigo-500"
+                            />
+                        </div>
+                    </div>
+                    <textarea 
+                      value={rawData}
+                      onChange={(e) => setRawData(e.target.value)}
+                      placeholder='{"pages":{...},"html":"<div class=\'image-area\'>..."}'
+                      className="w-full h-24 bg-neutral-800 border border-neutral-700 rounded-lg p-3 text-sm font-mono text-neutral-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 custom-scrollbar resize-y"
+                    ></textarea>
+                    
+                    <button 
+                      onClick={handleParseData}
+                      className="self-end bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors shadow-lg"
+                    >
+                      <i className="ph-fill ph-magic-wand text-lg"></i>
+                      Extraire les vidéos
+                    </button>
+                  </div>
+                </div>
+              </header>
+
+              <main className="max-w-7xl mx-auto p-4 flex flex-col lg:flex-row gap-6 mt-4">
+                <section className="flex-1 flex flex-col gap-4">
+                  {error && (
+                    <div className="bg-red-900/50 border border-red-500/50 text-red-200 px-4 py-3 rounded-lg flex items-start gap-3">
+                      <i className="ph-fill ph-warning-circle text-xl mt-0.5 shrink-0"></i>
+                      <p className="text-sm">{error}</p>
+                    </div>
+                  )}
+
+                  <div className="bg-black rounded-xl overflow-hidden shadow-2xl ring-1 ring-neutral-800 aspect-video relative flex items-center justify-center">
+                    {activeVideo ? (
+                      <video 
+                        ref={videoRef}
+                        controls 
+                        playsInline
+                        className="w-full h-full object-contain"
+                        poster={activeVideo.thumbnail}
+                      >
+                        <source src={activeVideo.videoSrc} type={activeVideo.mimeType} />
+                        Votre navigateur ne supporte pas la vidéo.
+                      </video>
+                    ) : (
+                      <div className="text-neutral-500 flex flex-col items-center gap-2">
+                        <i className="ph ph-video text-5xl opacity-20"></i>
+                        <p>Aucune vidéo</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {activeVideo && (
+                    <div className="bg-neutral-800 rounded-xl p-5 shadow-lg border border-neutral-700 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                      <div className="min-w-0 flex-1">
+                        <h2 className="text-lg sm:text-xl font-bold text-white truncate">{activeVideo.title}</h2>
+                        <p className="text-neutral-400 text-sm mt-1">Format: {activeVideo.mimeType.split('/')[1]?.toUpperCase() || 'Inconnu'}</p>
+                      </div>
+                      <a 
+                        href={activeVideo.videoSrc} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="w-full sm:w-auto bg-neutral-700 hover:bg-neutral-600 text-white px-4 py-3 sm:py-2 rounded-lg flex items-center justify-center gap-2 text-sm font-medium transition-colors shrink-0"
+                      >
+                        <i className="ph ph-download-simple text-lg"></i>
+                        Ouvrir le fichier
+                      </a>
+                    </div>
+                  )}
+                </section>
+
+                <aside className="w-full lg:w-96 flex flex-col gap-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-semibold text-neutral-200 flex items-center gap-2">
+                      <i className="ph-fill ph-play-circle text-indigo-400 text-xl"></i>
+                      Liste ({videos.length})
+                    </h3>
+                  </div>
+
+                  <div className="bg-neutral-800 border border-neutral-700 rounded-xl overflow-hidden flex flex-col max-h-[400px] lg:max-h-[600px]">
+                    <div className="overflow-y-auto p-2 flex flex-col gap-1 custom-scrollbar">
+                      {videos.length > 0 ? (
+                        videos.map((video) => (
+                          <button
+                            key={video.id}
+                            onClick={() => handleVideoSelect(video)}
+                            className={`flex items-center gap-3 p-2 rounded-lg text-left transition-all group w-full ${
+                              activeVideo?.id === video.id 
+                                ? 'bg-indigo-600/20 ring-1 ring-indigo-500/50' 
+                                : 'hover:bg-neutral-700/50'
+                            }`}
+                          >
+                            <div className="relative w-20 sm:w-24 h-14 sm:h-16 shrink-0 bg-black rounded-md overflow-hidden ring-1 ring-white/10">
+                              {video.thumbnail ? (
+                                <img src={video.thumbnail} alt={video.title} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-neutral-600">
+                                  <i className="ph ph-film text-xl"></i>
+                                </div>
+                              )}
+                              <div className={`absolute inset-0 bg-black/40 flex items-center justify-center ${activeVideo?.id === video.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity`}>
+                                <i className={`ph-fill ph-play text-xl ${activeVideo?.id === video.id ? "text-indigo-400" : "text-white"}`}></i>
+                              </div>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className={`text-sm font-medium truncate ${activeVideo?.id === video.id ? 'text-indigo-300' : 'text-neutral-200'}`}>
+                                {video.title}
+                              </p>
+                              <p className="text-xs text-neutral-500 mt-1 uppercase">
+                                {video.mimeType.split('/')[1] || 'VIDEO'}
+                              </p>
+                            </div>
+                          </button>
+                        ))
+                      ) : (
+                        <div className="p-8 text-center text-neutral-500 text-sm">
+                          Collez les données ci-dessus pour voir la liste.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </aside>
+              </main>
+            </div>
+          );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
