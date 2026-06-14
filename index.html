@@ -52,6 +52,7 @@
             const extractedVideos = [];
             const baseUrl = 'https://fly14.gigafile.nu';
 
+            // querySelectorAll parcourt le DOM dans l'ordre exact du code source
             areas.forEach((area, index) => {
               const pin = area.querySelector('.pin');
               
@@ -60,14 +61,12 @@
                 const title = area.querySelector('.image-title')?.textContent || `Vidéo ${index + 1}`;
                 const imgNode = area.querySelector('img');
                 const thumbSrc = imgNode ? imgNode.getAttribute('src') : '';
-                const aNode = area.querySelector('a.image-data');
-                const viewerHref = aNode ? aNode.getAttribute('href') : '';
 
                 const videoSrc = dataVal ? baseUrl + dataVal.substring(1) : '';
                 const thumbnail = thumbSrc ? baseUrl + thumbSrc.substring(1) : '';
 
                 extractedVideos.push({
-                  id: index.toString(),
+                  id: index.toString(), // ID basé sur l'ordre d'origine
                   title,
                   videoSrc,
                   thumbnail,
@@ -76,11 +75,21 @@
               }
             });
 
-            return extractedVideos;
+            return extractedVideos; // Le tableau est dans le bon ordre
+          };
+
+          const playVideo = (video) => {
+            setActiveVideo(video);
+            if (videoRef.current) {
+              videoRef.current.load();
+              // Un petit délai permet d'éviter certaines erreurs de lecture sur mobile
+              setTimeout(() => {
+                  videoRef.current.play().catch(e => console.log("Lecture automatique bloquée par le navigateur"));
+              }, 50);
+            }
           };
 
           useEffect(() => {
-            // Charger les données de secours au lancement
             const initialVideos = extractVideosFromHtml(SAMPLE_JSON.html);
             setVideos(initialVideos);
             if (initialVideos.length > 0) setActiveVideo(initialVideos[0]);
@@ -91,7 +100,6 @@
             setLoading(true);
             setError('');
 
-            // Liste de proxys CORS publics. Si l'un échoue, on passe au suivant.
             const proxies = [
               { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`, type: 'raw' },
               { url: `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`, type: 'wrapped' },
@@ -108,22 +116,22 @@
                 
                 if (proxy.type === 'wrapped') {
                   const data = await response.json();
-                  if (!data.contents) throw new Error('Pas de contenu (wrapped)');
+                  if (!data.contents) throw new Error('Pas de contenu');
                   parsedJson = JSON.parse(data.contents);
                 } else {
                   parsedJson = await response.json();
                 }
                 
                 success = true;
-                break; // Le proxy a fonctionné, on arrête de chercher
+                break;
               } catch (err) {
-                console.warn(`Proxy échoué: ${proxy.url}`, err);
+                console.warn(`Proxy échoué: ${proxy.url}`);
               }
             }
 
             try {
               if (!success || !parsedJson) {
-                throw new Error("Impossible de joindre l'URL. Les bloqueurs de publicités ou proxys empêchent la connexion.");
+                throw new Error("Impossible de joindre l'URL avec les proxys.");
               }
 
               if (parsedJson.html) {
@@ -135,11 +143,10 @@
                   setActiveVideo(extractedVideos[0]);
                 }
               } else {
-                throw new Error("Format des données inattendu.");
+                throw new Error("Format inattendu.");
               }
             } catch (err) {
               setError(`Erreur: ${err.message}`);
-              // Fallback en cas d'erreur
               const fallbackVideos = extractVideosFromHtml(SAMPLE_JSON.html);
               setVideos(fallbackVideos);
               if (fallbackVideos.length > 0) setActiveVideo(fallbackVideos[0]);
@@ -148,12 +155,17 @@
             }
           };
 
-          const handleVideoSelect = (video) => {
-            setActiveVideo(video);
-            if (videoRef.current) {
-              videoRef.current.load();
-              videoRef.current.play().catch(e => console.log("Lecture automatique bloquée par le navigateur"));
-            }
+          // --- LOGIQUE PRECEDENT / SUIVANT ---
+          const currentIndex = videos.findIndex(v => v.id === activeVideo?.id);
+          const hasPrev = currentIndex > 0;
+          const hasNext = currentIndex >= 0 && currentIndex < videos.length - 1;
+
+          const handlePrev = () => {
+            if (hasPrev) playVideo(videos[currentIndex - 1]);
+          };
+
+          const handleNext = () => {
+            if (hasNext) playVideo(videos[currentIndex + 1]);
           };
 
           return (
@@ -176,7 +188,7 @@
                     <button 
                       onClick={fetchData}
                       disabled={loading}
-                      className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors disabled:opacity-50"
+                      className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors disabled:opacity-50 shrink-0"
                     >
                       {loading ? <i className="ph ph-spinner animate-spin text-lg"></i> : <i className="ph ph-arrows-clockwise text-lg"></i>}
                       <span className="hidden sm:inline">Charger</span>
@@ -194,6 +206,7 @@
                     </div>
                   )}
 
+                  {/* Lecteur Vidéo */}
                   <div className="bg-black rounded-xl overflow-hidden shadow-2xl ring-1 ring-neutral-800 aspect-video relative flex items-center justify-center">
                     {activeVideo ? (
                       <video 
@@ -203,6 +216,7 @@
                         playsInline
                         className="w-full h-full object-contain"
                         poster={activeVideo.thumbnail}
+                        onEnded={handleNext} // Passe à la suivante automatiquement à la fin
                       >
                         <source src={activeVideo.videoSrc} type={activeVideo.mimeType} />
                         Votre navigateur ne supporte pas la vidéo.
@@ -215,6 +229,34 @@
                     )}
                   </div>
 
+                  {/* Contrôles Précédent / Suivant */}
+                  {videos.length > 0 && activeVideo && (
+                    <div className="flex justify-between items-center bg-neutral-800 rounded-xl p-3 shadow-lg border border-neutral-700">
+                      <button 
+                        onClick={handlePrev} 
+                        disabled={!hasPrev}
+                        className="flex items-center gap-2 px-4 py-2 bg-neutral-700 hover:bg-neutral-600 disabled:opacity-30 disabled:hover:bg-neutral-700 text-white rounded-lg transition-colors"
+                      >
+                        <i className="ph-bold ph-caret-left"></i>
+                        <span className="hidden sm:inline font-medium">Précédent</span>
+                      </button>
+                      
+                      <div className="text-sm font-medium text-neutral-400">
+                        Vidéo <span className="text-white">{currentIndex + 1}</span> sur {videos.length}
+                      </div>
+
+                      <button 
+                        onClick={handleNext} 
+                        disabled={!hasNext}
+                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:hover:bg-indigo-600 text-white rounded-lg transition-colors"
+                      >
+                        <span className="hidden sm:inline font-medium">Suivant</span>
+                        <i className="ph-bold ph-caret-right"></i>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Détails */}
                   {activeVideo && (
                     <div className="bg-neutral-800 rounded-xl p-5 shadow-lg border border-neutral-700 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                       <div className="min-w-0 flex-1">
@@ -234,6 +276,7 @@
                   )}
                 </section>
 
+                {/* Playlist */}
                 <aside className="w-full lg:w-96 flex flex-col gap-4">
                   <div className="flex items-center justify-between">
                     <h3 className="text-lg font-semibold text-neutral-200 flex items-center gap-2">
@@ -245,17 +288,18 @@
                   <div className="bg-neutral-800 border border-neutral-700 rounded-xl overflow-hidden flex flex-col max-h-[400px] lg:max-h-[600px]">
                     <div className="overflow-y-auto p-2 flex flex-col gap-1 custom-scrollbar">
                       {videos.length > 0 ? (
-                        videos.map((video) => (
+                        videos.map((video, index) => (
                           <button
                             key={video.id}
-                            onClick={() => handleVideoSelect(video)}
+                            onClick={() => playVideo(video)}
                             className={`flex items-center gap-3 p-2 rounded-lg text-left transition-all group w-full ${
                               activeVideo?.id === video.id 
                                 ? 'bg-indigo-600/20 ring-1 ring-indigo-500/50' 
                                 : 'hover:bg-neutral-700/50'
                             }`}
                           >
-                            <div className="relative w-20 sm:w-24 h-14 sm:h-16 shrink-0 bg-black rounded-md overflow-hidden ring-1 ring-white/10">
+                            <span className="text-xs font-mono text-neutral-500 w-4 text-center shrink-0">{index + 1}</span>
+                            <div className="relative w-16 sm:w-20 h-12 sm:h-14 shrink-0 bg-black rounded-md overflow-hidden ring-1 ring-white/10">
                               {video.thumbnail ? (
                                 <img src={video.thumbnail} alt={video.title} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
                               ) : (
@@ -271,7 +315,7 @@
                               <p className={`text-sm font-medium truncate ${activeVideo?.id === video.id ? 'text-indigo-300' : 'text-neutral-200'}`}>
                                 {video.title}
                               </p>
-                              <p className="text-xs text-neutral-500 mt-1 uppercase">
+                              <p className="text-xs text-neutral-500 mt-0.5 uppercase">
                                 {video.mimeType.split('/')[1] || 'VIDEO'}
                               </p>
                             </div>
